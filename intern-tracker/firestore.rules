@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /users/{userId} {
+      // Anyone signed in can read their own profile (needed at login to learn their role).
+      // Admins can read every profile (to list interns).
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      // Only an admin may create an intern profile doc.
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      // Admin can do anything with tasks.
+      allow read, create, update, delete: if isAdmin();
+
+      // An intern may read only tasks assigned to them.
+      allow read: if isSignedIn() && resource.data.assignedTo == request.auth.uid;
+
+      // An intern may update ONLY the `submission` field of their own task,
+      // and only while the deadline has not passed yet.
+      allow update: if isSignedIn()
+        && resource.data.assignedTo == request.auth.uid
+        && request.time.toMillis() < resource.data.deadline
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submission']);
+    }
+  }
+}
